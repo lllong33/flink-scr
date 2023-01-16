@@ -2,14 +2,14 @@
 阿里-伍翀（云邪）分享地址: http://wuchong.me/blog/2020/02/25/demo-building-real-time-application-with-flink-sql/#more
 
 
-IS-1 本地配置代理, 解决docker pull 问题;
+IS-1 本地配置代理, 解决docker pull 问题;(done)
 
-IS-2 碰到 flink 出现无法获取元数据; 
+IS-2 碰到 flink 出现无法获取元数据; (done)
 - 在一通添加各种配置无效后, hostname, ip等信息; 依旧无法解决; 
 - 晚上重新拉取了一次 yml 文件, down + recreate 了下镜像解决
 
 
-IS-3 flink 1.16 with 参数有更新
+IS-3 flink 1.16 with 参数有更新 (done)
 CREATE TABLE user_behavior (
     user_id BIGINT,
     item_id BIGINT,
@@ -50,7 +50,7 @@ where behavior = 'buy'
 group by tumble(ts, interval '1' HOUR);
 
 
-IS-4 select 看不到数据, UI一直显示create中
+IS-4 select 看不到数据, UI一直显示create中 (done)
 Connection to node -1 (localhost/127.0.0.1:9092) could not be established. Broker may not be available.
 org.apache.kafka.common.errors.TimeoutException: Timed out waiting for a node assignment. Call: fetchMetadata
 2023-01-14 16:06:39,551 ERROR org.apache.flink.runtime.source.coordinator.SourceCoordinatorContext [] - Exception while handling result from async call in SourceCoordinator-Source: user_behavior[7]. Triggering job failover.
@@ -76,7 +76,7 @@ Caused by: java.lang.RuntimeException: Failed to get metadata for topics [user_b
 直接用本地client是可以消费; 
 
 容器网络使用<container>:9092访问kafka，主机网络使用<host>:9094访问kafka。
-IS-4.1 这里拆分两个端口原因?
+IS-4.1 这里拆分两个端口原因?(done)
 
 CREATE TABLE user_behavior (
      user_id BIGINT,
@@ -109,6 +109,9 @@ http://wuchong.me/blog/2020/02/25/demo-building-real-time-application-with-flink
 docker exec -it sql-client /opt/sql-client/sql-client.sh
 
 
+IS-5 kafka无法获取数据
+已排查create table 语句问题
+IS-5.1 待排查连接问题, 在IDEA, 集群, docker 三个环节中测试
 - 问题1 kafka无法获取元数据, 是否配置不应该设置为localhost, 而是docker的ip地址?
 Error while loading kafka-version.properties: inStream parameter is null
 org.apache.flink.kafka.shaded.org.apache.kafka.common.errors.TimeoutException: Timed out waiting for a node assignment. Call: fetchMetadata
@@ -179,7 +182,7 @@ UNIXTIME -> timestamp 13位的时间戳(1587975971431)
 ts AS TO_TIMESTAMP(FROM_UNIXTIME(app_time / 1000, 'yyyy-MM-dd HH:mm:ss')), -- 定义事件时间
 
 
-IS-4.2 尝试去掉ts字段, 用 stream api 读取, sql 都验证下
+IS-4.2 IDEA 尝试去掉ts字段, 用 stream api 读取, sql 都验证下(done)
 ```sql
 {"user_id":"980877","item_id":"5097906","category_id":"49192","behavior":"pv","ts":"2017-11-27T00:00:00Z"}
 {"user_id":"980877","item_id":"5097906","category_id":"49192","behavior":"pv","ts":"2017-11-27 00:00:00"}
@@ -208,8 +211,6 @@ CREATE TABLE user_behavior (
 ./kafka-console-producer.sh --broker-list kafka:9092 --topic user_behavior_v2
 {"user_id":"980877","item_id":"5097906","category_id":"49192","behavior":"pv"}
 
-
-
 CREATE TABLE user_behavior_v2 (
     user_id BIGINT,
     item_id BIGINT,
@@ -224,19 +225,45 @@ CREATE TABLE user_behavior_v2 (
 );
 
 
+-- 测试带ts的数据, normal
+-- 使用UTC即原始ts作为WM, error-1, varchar - numeric 不支持
+CREATE TABLE user_behavior_v2 (
+    user_id BIGINT,
+    item_id BIGINT,
+    category_id BIGINT,
+    behavior STRING,
+    ts STRING,
+    std_ts as to_timestamp_ltz(unix_timestamp(replace(replace('2017-11-27T00:00:00Z','T', ' '),'Z','')) * 1000,3),
+    proctime as PROCTIME(),   -- 通过计算列产生一个处理时间列
+    WATERMARK FOR std_ts as std_ts - INTERVAL '5' SECOND  -- 在ts上定义watermark，ts成为事件时间列
+    -- WATERMARK FOR ts as ts - INTERVAL '5' SECOND  -- 在ts上定义watermark，ts成为事件时间列
+) WITH (
+    'connector' = 'kafka',  -- 使用 kafka connector
+    'topic' = 'user_behavior',  -- kafka topic
+    'scan.startup.mode' = 'earliest-offset',  -- 从起始 offset 开始读取
+    'properties.bootstrap.servers' = 'node1:9092',  -- kafka broker 地址
+    'format' = 'json'  -- 数据源格式为 json
+);
+
 ```
 
-
-- 尝试剔除ts字段, fs-kafka是否正常
+- 尝试剔除ts字段, fs-kafka是否正常(ok)
   - 第二个问题没了, 第一个问题还存在, 依旧无法获取到数据
 另外拿一个之前的用例参考 
-    - flink-tutorial 
-        IS-4.2 maven 自动设置为JDK1.5
-    - atguigu 数仓
-    - flink-cookbook 
-
 - 确定proctime 字段类型格式
 - event_time 字段类型格式, timestamp(3) ?
 - 最好能看下源码, 限制的原因?
+
+
+IS-4.2 maven 自动设置为JDK1.5(done)
+修改maven setting 文件, 设置默认值1.8
+
+
+
+# tips
+可参考的代码:
+- flink-tutorial ()
+- atguigu 数仓
+- flink-cookbook 
 
 
